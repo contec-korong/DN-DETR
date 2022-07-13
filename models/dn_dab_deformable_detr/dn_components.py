@@ -3,14 +3,15 @@
 # Copyright (c) 2022 IDEA. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 
-
 import torch
+import torch.nn.functional as F
+
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        accuracy, get_world_size, interpolate,
                        is_dist_avail_and_initialized, inverse_sigmoid)
-# from .DABDETR import sigmoid_focal_loss
 from util import box_ops
-import torch.nn.functional as F
+from ..losses.kf_iou_loss import KFLoss
+from ..losses.smooth_l1_loss import SmoothLoss
 
 
 def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
@@ -38,8 +39,8 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
         alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
         loss = alpha_t * loss
 
-
     return loss.mean(1).sum() / num_boxes
+
 
 def prepare_for_dn(dn_args, tgt_weight, embedweight, batch_size, training, num_queries, num_classes, hidden_dim, label_enc):
     """
@@ -56,7 +57,6 @@ def prepare_for_dn(dn_args, tgt_weight, embedweight, batch_size, training, num_q
     :param label_enc: encode labels in dn
     :return:
     """
-
     if training:
         targets, scalar, label_noise_scale, box_noise_scale, num_patterns = dn_args
     else:
@@ -76,7 +76,7 @@ def prepare_for_dn(dn_args, tgt_weight, embedweight, batch_size, training, num_q
         # if int(max(known_num))>0:
         #     scalar=scalar//int(max(known_num))
 
-        # can be modified to selectively denosie some label or boxes; also known label prediction
+        # can be modified to selectively denoise some label or boxes; also known label prediction
         unmask_bbox = unmask_label = torch.cat(known)
         labels = torch.cat([t['labels'] for t in targets])
         boxes = torch.cat([t['boxes'] for t in targets])
@@ -102,11 +102,10 @@ def prepare_for_dn(dn_args, tgt_weight, embedweight, batch_size, training, num_q
         # noise on the box
         if box_noise_scale > 0:
             diff = torch.zeros_like(known_bbox_expand)
-            diff[:, :2] = known_bbox_expand[:, 2:] / 2
+            diff[:, :2] = known_bbox_expand[:, 2:4] / 2
             diff[:, 2:] = known_bbox_expand[:, 2:]
-            known_bbox_expand += torch.mul((torch.rand_like(known_bbox_expand) * 2 - 1.0),
-                                           diff).cuda() * box_noise_scale
-            known_bbox_expand = known_bbox_expand.clamp(min=0.0, max=1.0)
+            known_bbox_expand += torch.mul((torch.rand_like(known_bbox_expand) * 2 - 1.0), diff).cuda() * box_noise_scale
+            known_bbox_expand = known_bbox_expand.clamp(min=0.0, max=1.0)  ## ANGLE NOISE ?? sjhong
 
         m = known_labels_expaned.long().to('cuda')
         input_label_embed = label_enc(m)
@@ -117,7 +116,7 @@ def prepare_for_dn(dn_args, tgt_weight, embedweight, batch_size, training, num_q
         single_pad = int(max(known_num))
         pad_size = int(single_pad * scalar)
         padding_label = torch.zeros(pad_size, hidden_dim).cuda()
-        padding_bbox = torch.zeros(pad_size, 4).cuda()
+        padding_bbox = torch.zeros(pad_size, 5).cuda()  # sjhong
         input_query_label = torch.cat([padding_label, tgt], dim=0).repeat(batch_size, 1, 1)
         input_query_bbox = torch.cat([padding_bbox, refpoint_emb], dim=0).repeat(batch_size, 1, 1)
 
@@ -173,7 +172,7 @@ def dn_post_process(outputs_class, outputs_coord, mask_dict):
         output_known_coord = outputs_coord[:, :, :mask_dict['pad_size'], :]
         outputs_class = outputs_class[:, :, mask_dict['pad_size']:, :]
         outputs_coord = outputs_coord[:, :, mask_dict['pad_size']:, :]
-        mask_dict['output_known_lbs_bboxes']=(output_known_class,output_known_coord)
+        mask_dict['output_known_lbs_bboxes'] = (output_known_class, output_known_coord)
     return outputs_class, outputs_coord
 
 
@@ -200,26 +199,24 @@ def prepare_for_loss(mask_dict):
     return known_labels, known_bboxs, output_known_class, output_known_coord, num_tgt
 
 
-def tgt_loss_boxes(src_boxes, tgt_boxes, num_tgt,):
-    """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
-       targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
-       The target boxes are expected in format (center_x, center_y, w, h), normalized by the image size.
+def tgt_loss_boxes(src_boxes, tgt_boxes, num_tgt):
+    """Compute the losses related to the bounding boxes, the L1 regression loss and the KFIoU loss
+       targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 5]
+       The target boxes are expected in format (center_x, center_y, w, h, angle), normalized by the image size.
     """
     if len(tgt_boxes) == 0:
         return {
             'tgt_loss_bbox': torch.as_tensor(0.).to('cuda'),
-            'tgt_loss_giou': torch.as_tensor(0.).to('cuda'),
+            'tgt_loss_kfiou': torch.as_tensor(0.).to('cuda'),
         }
 
-    loss_bbox = F.l1_loss(src_boxes, tgt_boxes, reduction='none')
+    loss_bbox = SmoothLoss(reduction='none')(src_boxes, tgt_boxes)
+    loss_kfiou = KFLoss(reduction='none')(src_boxes, tgt_boxes)
 
     losses = {}
     losses['tgt_loss_bbox'] = loss_bbox.sum() / num_tgt
+    losses['tgt_loss_kfiou'] = loss_kfiou.sum() / num_tgt
 
-    loss_giou = 1 - torch.diag(box_ops.generalized_box_iou(
-        box_ops.box_cxcywh_to_xyxy(src_boxes),
-        box_ops.box_cxcywh_to_xyxy(tgt_boxes)))
-    losses['tgt_loss_giou'] = loss_giou.sum() / num_tgt
     return losses
 
 
@@ -259,13 +256,12 @@ def compute_dn_loss(mask_dict, training, aux_num, focal_alpha):
        """
     losses = {}
     if training and 'output_known_lbs_bboxes' in mask_dict:
-        known_labels, known_bboxs, output_known_class, output_known_coord, \
-        num_tgt = prepare_for_loss(mask_dict)
+        known_labels, known_bboxs, output_known_class, output_known_coord, num_tgt = prepare_for_loss(mask_dict)
         losses.update(tgt_loss_labels(output_known_class[-1], known_labels, num_tgt, focal_alpha))
         losses.update(tgt_loss_boxes(output_known_coord[-1], known_bboxs, num_tgt))
     else:
         losses['tgt_loss_bbox'] = torch.as_tensor(0.).to('cuda')
-        losses['tgt_loss_giou'] = torch.as_tensor(0.).to('cuda')
+        losses['tgt_loss_kfiou'] = torch.as_tensor(0.).to('cuda')
         losses['tgt_loss_ce'] = torch.as_tensor(0.).to('cuda')
         losses['tgt_class_error'] = torch.as_tensor(0.).to('cuda')
 
@@ -282,8 +278,8 @@ def compute_dn_loss(mask_dict, training, aux_num, focal_alpha):
             else:
                 l_dict = dict()
                 l_dict['tgt_loss_bbox'] = torch.as_tensor(0.).to('cuda')
+                l_dict['tgt_loss_kfiou'] = torch.as_tensor(0.).to('cuda')
                 l_dict['tgt_class_error'] = torch.as_tensor(0.).to('cuda')
-                l_dict['tgt_loss_giou'] = torch.as_tensor(0.).to('cuda')
                 l_dict['tgt_loss_ce'] = torch.as_tensor(0.).to('cuda')
                 l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                 losses.update(l_dict)

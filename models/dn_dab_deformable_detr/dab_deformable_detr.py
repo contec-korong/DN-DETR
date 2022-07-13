@@ -16,25 +16,27 @@
 # ------------------------------------------------------------------------
 
 
+import copy
+import math
 import os
+
 import torch
 import torch.nn.functional as F
 from torch import nn
-import math
 
 from util import box_ops
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        accuracy, get_world_size, interpolate,
                        is_dist_avail_and_initialized, inverse_sigmoid)
-
 from .backbone import build_backbone
+from .deformable_transformer import build_deforamble_transformer
+from .dn_components import prepare_for_dn, dn_post_process, compute_dn_loss
 from .matcher import build_matcher
 from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
                            dice_loss, sigmoid_focal_loss)
-from .deformable_transformer import build_deforamble_transformer
-import copy
+from ..losses.kf_iou_loss import KFLoss
+from ..losses.smooth_l1_loss import SmoothLoss
 
-from .dn_components import prepare_for_dn, dn_post_process, compute_dn_loss
 
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
@@ -68,7 +70,7 @@ class DABDeformableDETR(nn.Module):
         self.hidden_dim = hidden_dim = transformer.d_model
         self.num_classes = num_classes
         self.class_embed = nn.Linear(hidden_dim, num_classes)
-        self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        self.bbox_embed = MLP(hidden_dim, hidden_dim, 5, 3)  # sjhong
         self.num_feature_levels = num_feature_levels
         self.use_dab = use_dab
         self.num_patterns = num_patterns
@@ -80,7 +82,7 @@ class DABDeformableDETR(nn.Module):
                 self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
             else:
                 self.tgt_embed = nn.Embedding(num_queries, hidden_dim-1)  # for indicator
-                self.refpoint_embed = nn.Embedding(num_queries, 4)
+                self.refpoint_embed = nn.Embedding(num_queries, 5)  # sjhong
                 if random_refpoints_xy:
                     # import ipdb; ipdb.set_trace()
                     self.refpoint_embed.weight.data[:, :2].uniform_(0,1)
@@ -146,7 +148,7 @@ class DABDeformableDETR(nn.Module):
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
 
-    def forward(self, samples: NestedTensor, dn_args=None):
+    def forward(self, samples: NestedTensor, dn_args=0):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -155,7 +157,7 @@ class DABDeformableDETR(nn.Module):
                - "pred_logits": the classification logits (including no-object) for all queries.
                                 Shape= [batch_size x num_queries x (num_classes + 1)]
                - "pred_boxes": The normalized boxes coordinates for all queries, represented as
-                               (center_x, center_y, height, width). These values are normalized in [0, 1],
+                               (center_x, center_y, height, width, angle). These values are normalized in [0, 1],
                                relative to the size of each individual image (disregarding possible padding).
                                See PostProcess for information on how to retrieve the unnormalized bounding box.
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
@@ -192,9 +194,8 @@ class DABDeformableDETR(nn.Module):
             assert NotImplementedError
         elif self.use_dab:
             if self.num_patterns == 0:
-                tgt_all_embed = tgt_embed = self.tgt_embed.weight           # nq, 256
-                refanchor = self.refpoint_embed.weight      # nq, 4
-                # query_embeds = torch.cat((tgt_embed, refanchor), dim=1)
+                tgt_all_embed = self.tgt_embed.weight           # nq, 256
+                refanchor = self.refpoint_embed.weight      # nq, 5  # sjhong
             else:
                 # multi patterns is not used in this version
                 assert NotImplementedError
@@ -202,15 +203,18 @@ class DABDeformableDETR(nn.Module):
             assert NotImplementedError
 
         # prepare for dn
-        input_query_label, input_query_bbox, attn_mask, mask_dict = \
-            prepare_for_dn(dn_args, tgt_all_embed, refanchor, src.size(0), self.training, self.num_queries, self.num_classes,
-                           self.hidden_dim, self.label_enc)
+        input_query_label, input_query_bbox, attn_mask, mask_dict = prepare_for_dn(dn_args,
+                                                                                   tgt_all_embed,
+                                                                                   refanchor,
+                                                                                   src.size(0),
+                                                                                   self.training,
+                                                                                   self.num_queries,
+                                                                                   self.num_classes,
+                                                                                   self.hidden_dim,
+                                                                                   self.label_enc)
         query_embeds = torch.cat((input_query_label, input_query_bbox), dim=2)
-
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = \
             self.transformer(srcs, masks, pos, query_embeds, attn_mask)
-
-
 
         outputs_classes = []
         outputs_coords = []
@@ -222,7 +226,7 @@ class DABDeformableDETR(nn.Module):
             reference = inverse_sigmoid(reference)
             outputs_class = self.class_embed[lvl](hs[lvl])
             tmp = self.bbox_embed[lvl](hs[lvl])
-            if reference.shape[-1] == 4:
+            if reference.shape[-1] == 5:  # sjhong
                 tmp += reference
             else:
                 assert reference.shape[-1] == 2
@@ -234,7 +238,6 @@ class DABDeformableDETR(nn.Module):
         outputs_coord = torch.stack(outputs_coords)
         # dn post process
         outputs_class, outputs_coord = dn_post_process(outputs_class, outputs_coord, mask_dict)
-
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
@@ -294,7 +297,7 @@ class SetCriterion(nn.Module):
                                             dtype=src_logits.dtype, layout=src_logits.layout, device=src_logits.device)
         target_classes_onehot.scatter_(2, target_classes.unsqueeze(-1), 1)
 
-        target_classes_onehot = target_classes_onehot[:,:,:-1]
+        target_classes_onehot = target_classes_onehot[:, :, :-1]
         loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
         losses = {'loss_ce': loss_ce}
 
@@ -317,25 +320,21 @@ class SetCriterion(nn.Module):
         losses = {'cardinality_error': card_err}
         return losses
 
-    def loss_boxes(self, outputs, targets, indices, num_boxes):
-        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
-           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
-           The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
+    def loss_boxes(self, outputs, targets, indices, num_boxes):  # sjhong
+        """Compute the losses related to the bounding boxes, the L1 regression loss and the KFIoU loss
+           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 5]
+           The target boxes are expected in format (center_x, center_y, h, w, angle), normalized by the image size.
         """
         assert 'pred_boxes' in outputs
         idx = self._get_src_permutation_idx(indices)
+
         src_boxes = outputs['pred_boxes'][idx]
         target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
-        loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction='none')
+        loss_bbox = KFLoss(reduction='none')(src_boxes, target_boxes) + SmoothLoss(reduction='none')(src_boxes, target_boxes)
 
-        losses = {}
-        losses['loss_bbox'] = loss_bbox.sum() / num_boxes
+        losses = {'loss_bbox': loss_bbox.sum() / num_boxes}
 
-        loss_giou = 1 - torch.diag(box_ops.generalized_box_iou(
-            box_ops.box_cxcywh_to_xyxy(src_boxes),
-            box_ops.box_cxcywh_to_xyxy(target_boxes)))
-        losses['loss_giou'] = loss_giou.sum() / num_boxes
         return losses
 
     def loss_masks(self, outputs, targets, indices, num_boxes):
@@ -461,36 +460,33 @@ class SetCriterion(nn.Module):
 
 
 class PostProcess(nn.Module):
-    """ This module converts the model's output into the format expected by the coco api"""
+    """ This module converts the model's output into the format expected by the contec api"""
 
     @torch.no_grad()
-    def forward(self, outputs, target_sizes):
+    def forward(self, outputs, target_size):
         """ Perform the computation
         Parameters:
             outputs: raw outputs of the model
-            target_sizes: tensor of dimension [batch_size x 2] containing the size of each images of the batch
-                          For evaluation, this must be the original image size (before any data augmentation)
-                          For visualization, this should be the image size after data augment, but before padding
+            target_size: tensor of dimension [batch_size x 2] containing the size of each images of the batch
+                         For evaluation, this must be the original image size (before any data augmentation)
+                         For visualization, this should be the image size after data augment, but before padding
         """
-        out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
+        logits, boxes = outputs['pred_logits'], outputs['pred_boxes']
 
-        assert len(out_logits) == len(target_sizes)
-        assert target_sizes.shape[1] == 2
-
-        prob = out_logits.sigmoid()
-        topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 100, dim=1)
+        prob = logits.sigmoid()
+        num_max_pred = 50
+        topk_values, topk_indexes = torch.topk(prob.view(logits.shape[0], -1), num_max_pred, dim=1)
         scores = topk_values
-        topk_boxes = topk_indexes // out_logits.shape[2]
-        labels = topk_indexes % out_logits.shape[2]
-        boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
-        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1,1,4))
+        topk_boxes = torch.div(topk_indexes, logits.shape[2], rounding_mode='floor')
+        labels = topk_indexes % logits.shape[2]
+        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 5))  # sjhong
+        boxes = box_ops.box_decode(boxes, target_size)
 
-        # and from relative [0, 1] to absolute [0, height] coordinates
-        img_h, img_w = target_sizes.unbind(1)
-        scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
-        boxes = boxes * scale_fct[:, None, :]
+        boxes = boxes.squeeze(0)
+        scores = scores.squeeze(0)
+        labels = labels.squeeze(0)
 
-        results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
+        results = [{'scores': s, 'labels': l + 1, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
 
         return results
 
@@ -511,9 +507,6 @@ class MLP(nn.Module):
 
 
 def build_dab_deformable_detr(args):
-    num_classes = 20 if args.dataset_file != 'coco' else 91
-    if args.dataset_file == "coco_panoptic":
-        num_classes = 250
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
@@ -522,7 +515,7 @@ def build_dab_deformable_detr(args):
     model = DABDeformableDETR(
         backbone,
         transformer,
-        num_classes=num_classes,
+        num_classes=args.num_cls,
         num_queries=args.num_queries,
         num_feature_levels=args.num_feature_levels,
         aux_loss=args.aux_loss,
@@ -531,19 +524,15 @@ def build_dab_deformable_detr(args):
         num_patterns=args.num_patterns,
         random_refpoints_xy=args.random_refpoints_xy
     )
-    if args.masks:
-        model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
     matcher = build_matcher(args)
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef}
-    weight_dict['loss_giou'] = args.giou_loss_coef
+
     # dn loss
     if args.use_dn:
         weight_dict['tgt_loss_ce'] = args.cls_loss_coef
         weight_dict['tgt_loss_bbox'] = args.bbox_loss_coef
-        weight_dict['tgt_loss_giou'] = args.giou_loss_coef
-    if args.masks:
-        weight_dict["loss_mask"] = args.mask_loss_coef
-        weight_dict["loss_dice"] = args.dice_loss_coef
+        weight_dict['tgt_loss_kfiou'] = args.bbox_loss_kfl_coef
+
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -553,16 +542,8 @@ def build_dab_deformable_detr(args):
         weight_dict.update(aux_weight_dict)
 
     losses = ['labels', 'boxes', 'cardinality']
-    if args.masks:
-        losses += ["masks"]
     # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
-    criterion = SetCriterion(num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha)
+    criterion = SetCriterion(args.num_cls, matcher, weight_dict, losses, focal_alpha=args.focal_alpha)
     criterion.to(device)
-    postprocessors = {'bbox': PostProcess()}
-    if args.masks:
-        postprocessors['segm'] = PostProcessSegm()
-        if args.dataset_file == "coco_panoptic":
-            is_thing_map = {i: i <= 90 for i in range(201)}
-            postprocessors["panoptic"] = PostProcessPanoptic(is_thing_map, threshold=0.85)
 
-    return model, criterion, postprocessors
+    return model, criterion, PostProcess()

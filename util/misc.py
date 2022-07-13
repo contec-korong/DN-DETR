@@ -4,29 +4,67 @@ Misc functions, including distributed helpers.
 
 Mostly copy-paste from torchvision references.
 """
+from collections import OrderedDict, defaultdict, deque
+from typing import Optional, List
+import datetime
 import os
-import random 
+import pickle
+import random
 import subprocess
 import time
-from collections import OrderedDict, defaultdict, deque
-import datetime
-import pickle
-from typing import Optional, List
-
-import json, time
+import json
 import numpy as np
+
+from torch import Tensor
+from torch.utils.tensorboard import SummaryWriter
+import colorsys
 import torch
 import torch.distributed as dist
-from torch import Tensor
+import torchvision
 
-import colorsys
 
 # needed due to empty tensor bug in pytorch and torchvision 0.5
-import torchvision
+
 __torchvision_need_compat_flag = float(torchvision.__version__.split('.')[1]) < 7
 if __torchvision_need_compat_flag:
     from torchvision.ops import _new_empty_tensor
     from torchvision.ops.misc import _output_size
+
+
+class Logger:
+    def __init__(self, log_path):
+        """Tensorboard logger
+
+        Args:
+            log_path (str): Path where log file will be saved
+        """
+        date = time.strftime("%m_%d_%H_%M") + '_log'
+        log_path = os.path.join(log_path, date)
+        if not os.path.exists(log_path):
+            os.makedirs(log_path)
+        self.writer = SummaryWriter(log_path)
+        self.iter = 0
+
+    def close(self):
+        self.writer.close()
+
+    def write_logger(self, epoch, **kwargs):
+        """Write log on log file
+
+        Args:
+            kwargs (dict): Log information
+            epoch (int): Current training epoch
+        """
+        for tag, value in kwargs.items():
+            if 'tgt' in tag:
+                tag = '_'.join(tag.split('_')[:3]) + '/' + tag
+            elif len(tag.split('_')) > 1:
+                tag = '_'.join(tag.split('_')[:2]) + '/' + tag
+
+            if isinstance(value, torch.Tensor):
+                self.writer.add_scalar(tag, value.item(), epoch)
+            elif isinstance(value, (float, int)):
+                self.writer.add_scalar(tag, value, epoch)
 
 
 class SmoothedValue(object):
@@ -186,8 +224,6 @@ class MetricLogger(object):
     def __str__(self):
         loss_str = []
         for name, meter in self.meters.items():
-            # print(name, str(meter))
-            # import ipdb;ipdb.set_trace()
             if meter.count > 0:
                 loss_str.append(
                     "{}: {}".format(name, str(meter))
@@ -201,11 +237,8 @@ class MetricLogger(object):
     def add_meter(self, name, meter):
         self.meters[name] = meter
 
-    def log_every(self, iterable, print_freq, header=None, logger=None):
-        if logger is None:
-            print_func = print
-        else:
-            print_func = logger.info
+    def log_every(self, iterable, print_freq, header=None):
+        print_func = print
 
         i = 0
         if not header:

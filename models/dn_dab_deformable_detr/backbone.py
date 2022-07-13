@@ -15,16 +15,15 @@
 Backbone modules.
 """
 from collections import OrderedDict
+from typing import Dict, List
 
+from torch import nn
+from torchvision.models._utils import IntermediateLayerGetter
 import torch
 import torch.nn.functional as F
 import torchvision
-from torch import nn
-from torchvision.models._utils import IntermediateLayerGetter
-from typing import Dict, List
 
 from util.misc import NestedTensor, is_main_process
-
 from .position_encoding import build_position_encoding
 
 
@@ -69,7 +68,6 @@ class FrozenBatchNorm2d(torch.nn.Module):
 
 
 class BackboneBase(nn.Module):
-
     def __init__(self, backbone: nn.Module, train_backbone: bool, return_interm_layers: bool):
         super().__init__()
         for name, parameter in backbone.named_parameters():
@@ -136,7 +134,7 @@ class Joiner(nn.Sequential):
 def build_backbone(args):
     position_embedding = build_position_encoding(args)
     train_backbone = args.lr_backbone > 0
-    return_interm_layers = args.masks or (args.num_feature_levels > 1)
+    return_interm_layers = args.num_feature_levels > 1
     backbone = Backbone(args.backbone, train_backbone, return_interm_layers, args.dilation)
     model = Joiner(backbone, position_embedding)
     return model

@@ -272,7 +272,7 @@ def build(image_set, args):
         fix_size = False
     dataset = CocoDetection(img_folder, ann_file, 
             transforms=make_coco_transforms(image_set, fix_size=fix_size, strong_aug=strong_aug, args=args), 
-            return_masks=args.masks,
+            return_masks=False,
             aux_target_hacks=aux_target_hacks_list,
         )
 

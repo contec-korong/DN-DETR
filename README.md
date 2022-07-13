@@ -7,11 +7,9 @@ This repository is an official implementation of the [DN-DETR](https://arxiv.org
 [[paper link](https://arxiv.org/pdf/2203.01305.pdf)] [[中文解读](https://www.zhihu.com/question/517340666/answer/2381304399)]
 
 ## News
-[2022/7] Code for [DINO](https://arxiv.org/pdf/2203.03605.pdf) is available [here](https://github.com/IDEACVR/DINO)!
-
 [2022/6]: We release a unified detection and segmentation model [Mask DINO](https://arxiv.org/pdf/2206.02777.pdf) that achieves the best results on all the three segmentation tasks (**54.5** AP on [COCO instance leaderboard](https://paperswithcode.com/sota/instance-segmentation-on-coco-minival), **59.4** PQ on [COCO panoptic leaderboard](https://paperswithcode.com/sota/panoptic-segmentation-on-coco-minival), and **60.8** mIoU on [ADE20K semantic leaderboard](https://paperswithcode.com/sota/semantic-segmentation-on-ade20k))! Code will be available [here](https://github.com/IDEACVR/MaskDINO).
 
-[2022/5]Our code is available! Better performance ```49.5```AP on COCO achieved with ResNet-50.
+[2022/5]Our code is available!
 
 [2022/4]Code is avaliable for [DAB-DETR](https://arxiv.org/abs/2201.12329) [here](https://github.com/IDEA-opensource/DAB-DETR).
 
@@ -23,14 +21,26 @@ This repository is an official implementation of the [DN-DETR](https://arxiv.org
 [2022/3]We release another work [DINO:DETR with Improved DeNoising Anchor Boxes for End-to-End Object Detection](https://arxiv.org/abs/2203.03605) that for the first time establishes a DETR-like model as a SOTA model on the [leaderboard](https://paperswithcode.com/sota/object-detection-on-coco). Also based on **DN**. Code will be avaliable [here](https://github.com/IDEACVR/DINO).
 
 ## Introduction
-1. We present a novel denoising training method to speedup DETR training and offer a deepened understanding of the slow convergence issue of DETR-like methods. 
-2. DN is only a training method and be plugged into many DETR-like models or even traditional models to boost performance.
-3. DN-DETR achieves AP **43.4** and **48.6** with 12 and 50
-epochs of training 
-with ResNet-50 backbone. Compared with the baseline models under the same setting, DN-DETR achieves comparable performance with **50%** training epochs.
-4. Our optmized models result in better performance. DN-Deformable-DETR achieves **49.5** with a ResNet-50 backbone.
 
 
+**Abstract**: We present in this paper a novel denoising training
+method to speedup DETR (DEtection TRansformer) training and offer a deepened understanding of the slow convergence issue of DETR-like methods. We show that the slow
+convergence results from the instability of bipartite graph
+matching which causes inconsistent optimization goals in
+early training stages. To address this issue, except for the
+Hungarian loss, our method additionally feeds ground-truth
+bounding boxes with noises into Transformer decoder and
+trains the model to reconstruct the original boxes, which
+effectively reduces the bipartite graph matching difficulty
+and leads to a faster convergence. Our method is universal
+and can be easily plugged into any DETR-like methods by
+adding dozens of lines of code to achieve a remarkable improvement. As a result, our DN-DETR results in a remarkable improvement (+**1.9**AP) under the same setting and
+achieves the best result (AP **43.4** and **48.6** with 12 and 50
+epochs of training respectively) among DETR-like methods
+with ResNet-50 backbone. Compared with the baseline under the same setting, DN-DETR achieves comparable performance with **50%** training epochs. 
+
+
+![DN-DETR](.github/introc.png)
 ## Model
 We build upon DAB-DETR and add a denoising part to accelerate training convergence. It only adds minimal computation and will be removed during inference time.
 ![DN-DETR](.github/architect.png)
@@ -39,11 +49,7 @@ We conduct extensive experiments to validate the effectiveness of our denoising 
 ## Model Zoo
 We provide our models under **DAB-DETR**, **DAB-Deformable-DETR(deformable encoder only)**, and **DAB-Deformable-DETR** (See DAB-DETR [code](https://github.com/IDEA-opensource/DAB-DETR) and [paper](https://arxiv.org/abs/2201.12329) for more details). 
 
-You can also refer to our 
-
-[[model zoo in google drive]](https://drive.google.com/drive/folders/1wmiZKfOg_DIGIwyQedV4rzNqUwHVTkUv?usp=sharing) 
-
-[[model zoo in 百度网盘]](https://pan.baidu.com/s/13Dc_DgliVps4bHVlNujA4Q?pwd=niet)（提取码niet）.
+You can also refer to our [model zoo](https://drive.google.com/drive/folders/1wmiZKfOg_DIGIwyQedV4rzNqUwHVTkUv?usp=sharing).
 
 ### 50 epoch setting
 <table>
@@ -63,7 +69,7 @@ You can also refer to our
       <td>DN-DETR-R50</td>
       <td>R50</td>
       <td>44.7<sup><a id="sup3c" herf="#sup1">1</a></sup></td>
-      <td><a href="https://drive.google.com/drive/folders/1kuwScU8PhN61qQOl5bbiPhKAYbzDHsWs?usp=sharing">Google Drive</a>&nbsp/&nbsp<a href="https://pan.baidu.com/s/1TqvnjsbAjARZp1i8cB2w8A?pwd=niet">BaiDu</a>&nbsp</td>
+      <td><a href="https://drive.google.com/drive/folders/1kuwScU8PhN61qQOl5bbiPhKAYbzDHsWs?usp=sharing">Google Drive</a>&nbsp</td>
       <td>Table 1</td>
     </tr>
     <tr>
@@ -71,7 +77,7 @@ You can also refer to our
       <td>DN-DETR-R50-DC5</td>
       <td>R50</td>
       <td>46.3</td>
-      <td><a href="https://drive.google.com/drive/folders/1jr8BdDdMu8esABXdU3lNY7fpWVxAJtWa?usp=sharing">Google Drive</a>&nbsp/&nbsp<a href="https://pan.baidu.com/s/1lWrLUkxNfrncRTM-zmpbeA?pwd=niet">BaiDu</a>&nbsp;</td>
+      <td><a href="https://drive.google.com/drive/folders/1jr8BdDdMu8esABXdU3lNY7fpWVxAJtWa?usp=sharing">Google Drive</a>&nbsp;</td>
       <td>Table 1</td>
     </tr>
     <tr>
@@ -79,16 +85,16 @@ You can also refer to our
       <td>DN-DAB-Deformbale-DETR<br>(Deformbale Encoder Only)<sup><a id="sup3c" herf="#sup3">3</a></sup></td>
       <td>R50</td>
       <td>48.6</td>
-      <td><a href="https://drive.google.com/drive/folders/1TLIuvMw6F9lBv77gWQ3Qcn5tdfG7kqdU?usp=sharing">Google Drive</a>&nbsp/&nbsp<a href="https://pan.baidu.com/s/1emOumSadTJbCcoqxhKnllQ?pwd=niet">BaiDu</a>&nbsp</td>
+      <td><a href="https://drive.google.com/drive/folders/1TLIuvMw6F9lBv77gWQ3Qcn5tdfG7kqdU?usp=sharing">Google Drive</a></td>
       <td>Table 3</td>
     </tr>
     <tr>
       <th>6</th>
       <td>DN-DAB-Deformable-DETR-R50-v2<sup><a id="sup4c" herf="#sup4">4</a></sup></td>
       <td>R50</td>
-      <td>49.5 (48.4 in 24 epochs)</td>
-      <td><a href="https://drive.google.com/drive/folders/1pIllR0VfSIqX8TmQy0PFNiPdp87j-78j?usp=sharing">Google Drive</a>&nbsp/&nbsp<a href="https://pan.baidu.com/s/1ugoXlpr3x72qcXPKQ669sA?pwd=niet">BaiDu</a>&nbsp</td>
-      <td>Optimized implementation with deformable attention in both encoder and decoder. See <a href="https://github.com/IDEA-opensource/DAB-DETR">DAB-DETR</a> for more details.</td>
+      <td>49.5</td>
+      <td><a href="https://drive.google.com/drive/folders/1pIllR0VfSIqX8TmQy0PFNiPdp87j-78j?usp=sharing">Google Drive</a></td>
+      <td>Optimized implementation. See <a href="https://github.com/IDEA-opensource/DAB-DETR">DAB-DETR</a> for more details.</td>
     </tr>
   </tbody>
 </table>
@@ -111,7 +117,7 @@ You can also refer to our
       <td>DN-DAB-DETR-R50-DC5(3 pat)<sup><a id="sup2c" herf="#sup1">2</a></sup></td>
       <td>R50</td>
       <td>41.7</td>
-      <td><a href="https://drive.google.com/drive/folders/1jWSIWTWgoiIvyA7w2xIkdk-B1pS2atPA?usp=sharing">Google Drive</a>&nbsp/&nbsp<a href="https://pan.baidu.com/s/1fgCIGpMf0cgO6ToIb0xFuA?pwd=niet">BaiDu</a>&nbsp</td>
+      <td><a href="https://drive.google.com/drive/folders/1jWSIWTWgoiIvyA7w2xIkdk-B1pS2atPA?usp=sharing">Google Drive</a></td>
       <td>Table 2</td>
     </tr>
     <tr>
@@ -119,7 +125,7 @@ You can also refer to our
       <td>DN-DAB-DETR-R101-DC5(3 pat)<sup><a id="sup2c" herf="#sup1">2</a></sup></td>
       <td>R101</td>
       <td>42.8</td>
-      <td><a href="https://drive.google.com/drive/folders/1elPn06gs8mNxR3jtE53zi4cK5qLGH0AV?usp=sharing">Google Drive</a>&nbsp/&nbsp<a href="https://pan.baidu.com/s/1fgCIGpMf0cgO6ToIb0xFuA?pwd=niet">BaiDu</a>&nbsp</td>
+      <td><a href="https://drive.google.com/drive/folders/1elPn06gs8mNxR3jtE53zi4cK5qLGH0AV?usp=sharing">Google Drive</a></td>
       <td>Table 2</td>
     </tr>
     <tr>
@@ -127,15 +133,7 @@ You can also refer to our
       <td>DN-DAB-Deformbale-DETR<br>(Deformble Encoder Only)<sup><a id="sup3c" herf="#sup3">3</a></sup></td>
       <td>R50</td>
       <td>43.4</td>
-      <td><a href="https://drive.google.com/drive/folders/1T-qiHrvDF38PyqLhMU3QFC_n-ZkVgMJh?usp=sharing">Google Drive</a>&nbsp/&nbsp<a href="https://pan.baidu.com/s/1XygS_bjhe8Gg9tFhs9Z6uQ?pwd=niet">BaiDu</a>&nbsp</td>
-      <td>Table 2</td>
-    </tr>
-    <tr>
-      <th>5</th>
-      <td>DN-DAB-Deformbale-DETR<br>(Deformble Encoder Only)<sup><a id="sup3c" herf="#sup3">3</a></sup></td>
-      <td>R101</td>
-      <td>44.1</td>
-      <td><a href="https://drive.google.com/drive/folders/1V8CH7AMf9HGUYNNgEYaGK_2g2T2LNNWD?usp=sharing">Google Drive</a>&nbsp/&nbsp<a href="https://pan.baidu.com/s/1Q_C7FMXAlyPcWkIhbf5M6g?pwd=niet">BaiDu</a>&nbsp</td>
+      <td><a href="https://drive.google.com/drive/folders/1T-qiHrvDF38PyqLhMU3QFC_n-ZkVgMJh?usp=sharing">Google Drive</a></td>
       <td>Table 2</td>
     </tr>
   </tbody>
@@ -148,11 +146,11 @@ Notes:
 - <sup><a id="sup3" herf="#sup3c">3</a></sup>: This model is based on DAB-Deformbale-DETR(Deformbale Encoder Only), which is a multiscale version of DAB-DETR. It requires 16 GPUs to train as it only use deformable attention in the encoder. 
 - <sup><a id="sup4" herf="#sup4c">4</a></sup>: This model is based on DAB-Deformbale-DETR which is an optimized implementation with deformable DETR. See <a href="https://github.com/IDEA-opensource/DAB-DETR">DAB-DETR</a> for more details. 
   <font color=red>**You are encouraged to use this
-deformable version**</font> as it uses deformable attention in both encoder and deocder, which is more lightweight (i.e, train with 4/8 A100 GPUs) and converges faster (i.e, achieves ```48.4``` in 24 epochs, comparable to the 50-epoch DAB-Deformable-DETR).
+deformable version**</font> as it use deformable attention in both encoder and deocder, which is more lightweight (i.e, train with 4/8 A100 GPUs) and converges faster.
 
 # Usage
 ## How to use denoising training in your own model
-Our code largely follows DAB-DETR and adds additional components for denoising training, which are warped in a file [dn_components.py](models/DAB_DETR/dn_components.py). There are mainly 3 functions including **prepare_for_dn**, **dn_post_proces** (the first two are used in your detection forward function to process the dn part), and **compute_dn_loss**(this one is used to calculate dn loss). You can import these functions and add them to your own detection model.
+Our code largely follows DAB-DETR and adds additional components for denoising training, which are warped in a file [dn_components.py](models/DAB_DETR/dn_components.py). There are mainly 3 functions including **prepare_for_dn**, **dn_post_proces** (the first two are used in your detection forward function to process the dn part), and **compute_dn_loss**(this one is used to calculate dn loss). You can import these functions and add them to your detection model.
 You may also compare DN-DETR and DAB-DETR to see how these functions are added if you would like to use it in your own detection models.
 
 You are also encouraged to apply it to some other DETR-like models or even traditional detection models and update results
@@ -185,7 +183,7 @@ pip install -r requirements.txt
 
 4. Compiling CUDA operators
 ```sh
-cd models/dn_dab_deformable_detr/ops
+cd models/dab_deformable_detr/ops
 python setup.py build install
 # unit test (should see all checking is True)
 python test.py
